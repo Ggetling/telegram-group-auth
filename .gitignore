@@ -1,0 +1,22 @@
+# Secrets never belong in the repository. Closed from the first commit.
+.env
+*.env
+!examples/.env.example
+
+# Roster databases, including whatever the tests leave behind.
+*.db
+*.db-wal
+*.db-shm
+*.sqlite3
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+*.egg-info/
+.DS_Store

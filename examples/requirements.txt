@@ -1,0 +1,3 @@
+# The example needs aiogram; the library core itself needs nothing.
+aiogram>=3.0,<4
+telegram-group-auth
