@@ -24,6 +24,9 @@ building something that looks like one.
 | Install | the bot has a `requirements.txt` or `pyproject.toml` | add `telegram-group-auth[aiogram] @ git+https://github.com/OWNER/telegram-group-auth` |
 | Copy | vendoring is the house style, or dependencies are frozen | copy `src/group_auth/` into the bot's source tree, unchanged |
 
+`OWNER` is the account hosting this repository; take it from the URL you were
+given.
+
 Copying works because every import inside the package is relative and the core
 has no dependencies at all. Do not copy individual files: `membership.py` needs
 `config.py`, `models.py`, `protocols.py` and `_time.py`.

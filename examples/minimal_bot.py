@@ -1,11 +1,11 @@
 """A whole bot whose users are the members of a group.
 
-Run it:
+Run it from a clone of the repository:
 
-    pip install "telegram-group-auth[aiogram] @ git+https://github.com/OWNER/telegram-group-auth"
+    pip install -e ".[aiogram]"
     export BOT_TOKEN=...            # from @BotFather
     export AUTH_ADMIN_IDS=...       # your own numeric id, from @userinfobot
-    python minimal_bot.py
+    python examples/minimal_bot.py
 
 Then add the bot to a group, as an administrator, and every member of that
 group can use it. Nobody has to be granted anything, and no list of user ids

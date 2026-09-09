@@ -41,8 +41,11 @@ it and call it complete.
 
 ## Quick start
 
+Try the example bot, which needs the repository itself:
+
 ```bash
-pip install "telegram-group-auth[aiogram] @ git+https://github.com/OWNER/telegram-group-auth"
+git clone https://github.com/OWNER/telegram-group-auth && cd telegram-group-auth
+pip install -e ".[aiogram]"
 export BOT_TOKEN=...          # from @BotFather
 export AUTH_ADMIN_IDS=...     # your numeric id, from @userinfobot
 python examples/minimal_bot.py
@@ -50,6 +53,9 @@ python examples/minimal_bot.py
 
 Add the bot to a group as an administrator of that group. Every member can now
 write to it.
+
+Throughout these documents, `OWNER` is the account hosting this repository —
+it is in the URL you were given.
 
 In an existing aiogram 3 bot:
 
