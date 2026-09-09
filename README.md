@@ -1,5 +1,7 @@
 # telegram-group-auth
 
+**English** | [Русский](README.ru.md)
+
 Authorization for a Telegram bot by membership in a group. Add the bot to a
 group and everyone in that group is a user of it. Administrators are configured
 separately and always get in.
