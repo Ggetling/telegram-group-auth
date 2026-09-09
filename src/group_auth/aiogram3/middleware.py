@@ -70,15 +70,25 @@ def _is_service_membership(event: TelegramObject) -> bool:
     from anybody, and they are the fallback path for keeping the roster honest
     when the bot is not an administrator of the group. If the gate swallowed
     them — and with ``private_only`` it would — that path would be dead.
+
+    **Exactly the three that** :func:`~group_auth.aiogram3.lifecycle_router`
+    **handles, and no more.** Every name here is a hole in the gate: the event
+    reaches the routers with no membership check and without ``auth`` in the
+    handler data. It is only safe because the lifecycle router matches these
+    three and aiogram then stops propagating them. ``group_chat_created`` and
+    ``supergroup_chat_created`` used to be on this list with no handler behind
+    them, which let anyone who created a group containing the bot run the
+    bot's own handlers unauthorized.
+
+    So: include the lifecycle router, and never add a name here without
+    adding the handler that consumes it.
     """
     if not isinstance(event, Message):
         return False
     return bool(
-        event.new_chat_members
-        or event.left_chat_member
-        or event.migrate_to_chat_id
-        or event.group_chat_created
-        or event.supergroup_chat_created
+        event.new_chat_members  # -> people_joined
+        or event.left_chat_member  # -> person_left
+        or event.migrate_to_chat_id  # -> group_migrated
     )
 
 

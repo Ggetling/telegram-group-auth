@@ -70,6 +70,9 @@ class MemoryStore:
             return
         self._users[user_id] = replace(current, is_group_admin=is_group_admin)
 
+    async def forget_user(self, user_id: int) -> bool:
+        return self._users.pop(user_id, None) is not None
+
     async def get_user(self, user_id: int) -> UserRecord | None:
         return self._users.get(user_id)
 

@@ -4,8 +4,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 import pytest
-from aiogram import Dispatcher
-from aiogram.types import CallbackQuery, Message
+from aiogram import Dispatcher, Router
+from aiogram.types import CallbackQuery, Message, Update
 
 from fakes import chat, message, mocked_bot, user
 from group_auth import AuthConfig, MembershipChecker, Reason, Verdict
@@ -14,6 +14,7 @@ from group_auth.aiogram3 import (
     UNGATED_OBSERVERS,
     AccessMiddleware,
     install,
+    lifecycle_router,
 )
 
 GROUP = -1001234567890
@@ -236,3 +237,61 @@ async def test_install_skips_observers_this_aiogram_does_not_have() -> None:
     tiny = Tiny()
     mw = install(tiny, build())
     assert mw in tiny.message.outer_middleware._middlewares
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{"group_chat_created": True}, {"supergroup_chat_created": True}],
+)
+async def test_a_chat_created_notice_is_not_a_way_past_the_gate(
+    extra: dict[str, Any],
+) -> None:
+    """These were on the pass-through list with no handler behind them.
+
+    Nothing consumed them, so they went straight on to the bot's own routers:
+    anyone who created a group containing the bot ran its handlers unchecked.
+    """
+    bot, session = mocked_bot()
+    session.members[(GROUP, PERSON)] = "left"
+    handler = Handler()
+    mw = AccessMiddleware(build())
+
+    result = await mw(
+        handler,
+        message(from_user=user(PERSON), in_chat=chat(-100999, "group"), **extra),
+        {"bot": bot},
+    )
+
+    assert result is None
+    assert handler.called is False
+
+
+async def test_an_outsiders_own_group_cannot_reach_the_bots_handlers() -> None:
+    """End to end, through a real Dispatcher wired the way the README says."""
+    bot, session = mocked_bot()
+    session.members[(GROUP, PERSON)] = "left"
+    checker = build()
+    reached: list[int] = []
+
+    own = Router(name="the bot's own")
+
+    @own.message()
+    async def catch_all(event: Message) -> None:
+        reached.append(event.chat.id)
+
+    dp = Dispatcher()
+    dp.include_router(lifecycle_router(checker))
+    install(dp, checker)
+    dp.include_router(own)
+
+    created = Message.model_construct(
+        message_id=1,
+        date=datetime.now(timezone.utc),
+        chat=chat(-100999, "group"),
+        from_user=user(PERSON),
+        text=None,
+        group_chat_created=True,
+    )
+    await dp.feed_update(bot, Update(update_id=1, message=created))
+
+    assert reached == []
