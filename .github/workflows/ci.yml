@@ -3,8 +3,10 @@ name: checks
 # No secrets and no network beyond installing dependencies, so this run is
 # reproducible in any fork, and a pull request from one is safe to run.
 on:
+  # main and pull requests only: a push to a PR branch would otherwise run the
+  # matrix twice for the same commit.
   push:
-    branches-ignore: [main]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
