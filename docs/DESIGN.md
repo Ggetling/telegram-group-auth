@@ -137,7 +137,7 @@ can be re-run rather than believed.
 | The core reads a framework's objects, not just its own | a test passes a plain `dict`; separately, all seven real `python-telegram-bot` 22.8 `ChatMember` subclasses were constructed and read correctly, `restricted` both ways | passes |
 | Types and style | `mypy` (strict, 13 files), `ruff check`, `ruff format --check` | clean |
 | aiogram version | 3.31.0 on Python 3.13.5 locally | passes |
-| Python 3.10, 3.11, 3.12, 3.13 | the CI matrix, run 34364991608 on 2026-09-09 — tests, lint, types and the bare-core import on each | passes on all four, **for commit c3c9bd6**. The security fixes after it have been run locally on 3.13 only; the matrix re-runs on push |
+| Python 3.10, 3.11, 3.12, 3.13 | the CI matrix, run 34368856233 on 2026-09-09 — tests, lint, types and the bare-core import on each | passes on all four, for commit f7ca064, the security fixes included |
 
 ## Not verified
 
