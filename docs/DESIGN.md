@@ -66,13 +66,15 @@ What an attacker gets, honestly.
 
 | Situation | Exposure |
 |---|---|
-| Removed from the group | Keeps access up to `cache_ttl` (300 s by default). If the bot is a group administrator, the `chat_member` update revokes it immediately instead — this is the main reason to make the bot a group admin |
+| Removed from the group | Keeps access up to `cache_ttl` (300 s by default). If the bot is a group administrator, the `chat_member` update revokes it immediately instead — this is the main reason to make the bot a group admin. A reported departure also closes that person's grace window, so an outage straight afterwards does not hand the fifteen minutes back |
 | Never in the group | Nothing. Refused, and the refusal is cached |
 | Can add the bot to a group they control | Nothing under the default `bind_on_add=admin_only`; the binding is refused and logged. Under `always` they have just granted their own group access — do not set that unless the bot is only ever added by people you trust |
 | Group turns into a supergroup | The chat id changes. The lifecycle router moves the binding; without it, access would quietly stop for everyone but administrators |
 | Bot removed from the bound group | The binding is deliberately kept, so re-adding the bot restores access. Meanwhile every check fails: grace covers the first 15 minutes, then nobody but administrators is in |
 | Telegram unreachable | Everyone verified in the last `grace` seconds keeps working. Nobody new gets in |
 | Roster database corrupted or deleted | No effect on access at all. The authority is `getChatMember`; the store is bookkeeping, and every store error is swallowed and logged |
+| Another local account on the host | The roster file is created `0600`, and an existing one is narrowed to `0600` on open. Before that it was `0644` — every local account could read the names and usernames of everybody the bot had seen |
+| Creates their own group containing the bot | Nothing. The gate used to wave through the `group_chat_created` service message, which no handler consumed, so it carried on to the bot's own routers with no membership check and no `auth` in the handler data |
 | Group with "hide members" enabled, or an anonymous admin | **unknown** — see below |
 
 Not addressed, by design: roles beyond admin/everyone, per-command
@@ -90,6 +92,26 @@ in memory".
 blocking call to a thread. Cheaper than an async SQLite dependency on a small
 machine.
 
+### The roster is personal data
+
+It holds a telegram id, a username and a name for everybody the bot has seen,
+so two things follow.
+
+`SqliteStore` sets the file — and its `-wal` and `-shm` companions, which carry
+the same rows until a checkpoint — to `0600` on open, an existing database
+included. `sqlite3` would otherwise create it `0644` minus the umask, readable
+by every account on the host. Pass `file_mode=None` to manage the permissions
+yourself.
+
+`MembershipChecker.erase_user(id)` deletes the row and the cached verdict
+together; a deletion that leaves a verdict cached is half a deletion. It is
+built on `AuthStore.forget_user`, the one store method the gate itself never
+calls, and it is the only place in the package that lets a store error
+propagate instead of swallowing it — elsewhere the rule is that a broken store
+must not become a refusal, but a deletion that quietly failed must not look
+like one that worked. Nothing here expires rows on its own: how long a bot
+keeps its roster is the bot's decision, not the library's.
+
 **Schema changes must be additive and go in a new table.** The schema is all
 `CREATE TABLE IF NOT EXISTS` and contains no `ALTER`. A column added to an
 existing table will never appear in a database that already exists on
@@ -106,7 +128,7 @@ can be re-run rather than believed.
 
 | What | How | Result |
 |---|---|---|
-| The access logic: every status, cache expiry both ways, grace in both directions, immediate revocation, multiple groups, partial API failure | `python -m pytest -q`, 93 tests, injected clock, no network | passes |
+| The access logic: every status, cache expiry both ways, grace in both directions, immediate revocation, multiple groups, partial API failure | `python -m pytest -q`, 108 tests, injected clock, no network | passes |
 | Both stores behave identically | one parametrized test body over `MemoryStore` and `SqliteStore` | passes |
 | SQLite survives a restart | reopen the file in a second store, read back roster and binding | passes |
 | The gate covers every entry point | asserts `install()` attached to each of `GATED_OBSERVERS` and to none of `UNGATED_OBSERVERS` | passes |
@@ -115,7 +137,7 @@ can be re-run rather than believed.
 | The core reads a framework's objects, not just its own | a test passes a plain `dict`; separately, all seven real `python-telegram-bot` 22.8 `ChatMember` subclasses were constructed and read correctly, `restricted` both ways | passes |
 | Types and style | `mypy` (strict, 13 files), `ruff check`, `ruff format --check` | clean |
 | aiogram version | 3.31.0 on Python 3.13.5 locally | passes |
-| Python 3.10, 3.11, 3.12, 3.13 | the CI matrix, run 34364991608 on 2026-09-09 — tests, lint, types and the bare-core import on each | passes on all four |
+| Python 3.10, 3.11, 3.12, 3.13 | the CI matrix, run 34364991608 on 2026-09-09 — tests, lint, types and the bare-core import on each | passes on all four, **for commit c3c9bd6**. The security fixes after it have been run locally on 3.13 only; the matrix re-runs on push |
 
 ## Not verified
 

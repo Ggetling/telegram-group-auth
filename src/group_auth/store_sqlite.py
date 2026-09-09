@@ -17,6 +17,7 @@ otherwise a rollback becomes impossible exactly when it is needed.
 from __future__ import annotations
 
 import asyncio
+import logging
 import sqlite3
 import threading
 from collections.abc import Sequence
@@ -55,6 +56,8 @@ CREATE TABLE IF NOT EXISTS auth_meta (
 _BOUND_KEY = "bound_groups"
 _VERSION_KEY = "schema_version"
 
+log = logging.getLogger("group_auth")
+
 
 def _record(row: sqlite3.Row) -> UserRecord:
     member = row["is_member"]
@@ -72,10 +75,11 @@ def _record(row: sqlite3.Row) -> UserRecord:
 
 
 class SqliteStore:
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, *, file_mode: int | None = 0o600) -> None:
         self._path = Path(path)
         if self._path.parent != Path(""):
             self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._file_mode = file_mode
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(self._path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
@@ -88,13 +92,36 @@ class SqliteStore:
                 (_VERSION_KEY, SCHEMA_VERSION),
             )
             self._conn.commit()
+        self._restrict()
+
+    def _restrict(self) -> None:
+        """Keep the roster readable only by the account that runs the bot.
+
+        ``sqlite3`` creates the file 0644 minus the umask, and this file is
+        personal data: the telegram id, username and name of everybody the bot
+        has ever seen. On a shared host that is every local account's to read.
+        Applied to an existing file too, so upgrading fixes a database that was
+        created before this. Pass ``file_mode=None`` to manage it yourself.
+        """
+        if self._file_mode is None:
+            return
+        # -wal and -shm carry the same rows until a checkpoint folds them in.
+        companions = (Path(f"{self._path}{suffix}") for suffix in ("-wal", "-shm"))
+        for path in (self._path, *companions):
+            try:
+                if path.exists():
+                    path.chmod(self._file_mode)
+            except OSError as exc:  # pragma: no cover - platform dependent
+                log.warning("could not restrict permissions on %s: %s", path, exc)
 
     # ------------------------------------------------------------- plumbing
 
-    def _write(self, sql: str, args: tuple[Any, ...] = ()) -> None:
+    def _write(self, sql: str, args: tuple[Any, ...] = ()) -> int:
+        """Runs one statement and returns how many rows it touched."""
         with self._lock:
-            self._conn.execute(sql, args)
+            cursor = self._conn.execute(sql, args)
             self._conn.commit()
+            return int(cursor.rowcount)
 
     def _read(self, sql: str, args: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
         with self._lock:
@@ -132,7 +159,7 @@ class SqliteStore:
     async def remember_user(self, user: UserRef, *, source: str) -> None:
         await asyncio.to_thread(self._remember_user, user, source)
 
-    def _set_flag(self, user_id: int, column: str, value: bool) -> None:
+    def _set_flag(self, user_id: int, column: str, value: bool, source: str) -> None:
         now = utcnow_iso()
         # The column name is never user input: both call sites pass a literal.
         self._write(
@@ -143,16 +170,24 @@ class SqliteStore:
                 {column} = excluded.{column},
                 last_seen = excluded.last_seen
             """,
-            (user_id, int(value), now, now, column),
+            (user_id, int(value), now, now, source),
         )
 
     async def set_membership(self, user_id: int, member: bool) -> None:
-        await asyncio.to_thread(self._set_flag, user_id, "is_member", member)
+        await asyncio.to_thread(
+            self._set_flag, user_id, "is_member", member, "membership"
+        )
 
     async def set_group_admin(self, user_id: int, is_group_admin: bool) -> None:
         await asyncio.to_thread(
-            self._set_flag, user_id, "is_group_admin", is_group_admin
+            self._set_flag, user_id, "is_group_admin", is_group_admin, "admins_sync"
         )
+
+    def _forget_user(self, user_id: int) -> bool:
+        return self._write("DELETE FROM auth_users WHERE user_id = ?", (user_id,)) > 0
+
+    async def forget_user(self, user_id: int) -> bool:
+        return await asyncio.to_thread(self._forget_user, user_id)
 
     def _get_user(self, user_id: int) -> UserRecord | None:
         rows = self._read("SELECT * FROM auth_users WHERE user_id = ?", (user_id,))

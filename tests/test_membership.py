@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from fakes import Boom, Clock, FakeApi
-from group_auth import AuthConfig, MembershipChecker, MemoryStore, Reason
+from group_auth import AuthConfig, MembershipChecker, MemoryStore, Reason, UserRef
 
 GROUP = -1001234567890
 OTHER_GROUP = -1009999999999
@@ -308,3 +308,73 @@ async def test_the_absence_detector_can_be_replaced() -> None:
     )
     api = FakeApi({(GROUP, PERSON): Boom("nope")})
     assert (await checker.check(api, PERSON)).reason is Reason.NOT_MEMBER
+
+
+async def test_a_reported_departure_closes_the_grace_window_too() -> None:
+    """Being told somebody left has to beat "we verified them recently".
+
+    ``forget`` used to drop the cached verdict but keep the moment of the last
+    successful check, so the first failed check after a departure handed the
+    person grace — up to fifteen minutes of access the group had just revoked.
+    """
+    checker, clock = build()
+    api = FakeApi({(GROUP, PERSON): "member"})
+    assert (await checker.check(api, PERSON)).allowed
+
+    await checker.record_membership(UserRef(PERSON), False, source="chat_member")
+    api.broken = True
+    clock.advance(1)
+
+    verdict = await checker.check(api, PERSON)
+    assert verdict.allowed is False
+    assert verdict.reason is Reason.API_ERROR
+
+
+async def test_expired_entries_do_not_pile_up_for_the_life_of_the_process() -> None:
+    """Every stranger who writes to the bot leaves an entry keyed by their id."""
+    checker, clock = build(deny_cache_ttl=1)
+    api = FakeApi({})
+    # The real threshold is 1024 and the sweep is what is under test, not the
+    # size at which it fires.
+    checker._sweep_at = 8
+    for offset in range(8):
+        await checker.check(api, 10_000 + offset)
+    assert len(checker._cache) == 8
+
+    clock.advance(3600)
+    await checker.check(api, PERSON)
+
+    assert len(checker._cache) == 1
+    assert checker._last_ok == {}
+
+
+async def test_erasing_a_person_takes_the_row_and_the_cached_verdict() -> None:
+    """A deletion that leaves a cached verdict behind is half a deletion."""
+    store = MemoryStore()
+    checker, _ = build(store=store)
+    api = FakeApi({(GROUP, PERSON): "member"})
+    assert (await checker.check(api, PERSON, user=UserRef(PERSON, "p"))).allowed
+    assert await store.get_user(PERSON) is not None
+
+    assert await checker.erase_user(PERSON) is True
+
+    assert await store.get_user(PERSON) is None
+    assert checker._cache == {}
+    assert await checker.erase_user(PERSON) is False
+
+
+async def test_erasing_refuses_to_look_like_it_worked_on_a_store_that_cannot() -> None:
+    class OldStore:
+        """A store written against the protocol before erasure was in it."""
+
+        async def get_bound_groups(self) -> tuple[int, ...]:
+            return ()
+
+    checker, _ = build(store=OldStore())  # type: ignore[arg-type]
+    with pytest.raises(NotImplementedError, match="cannot delete users"):
+        await checker.erase_user(PERSON)
+
+
+async def test_erasing_without_a_store_is_not_an_error() -> None:
+    checker, _ = build()
+    assert await checker.erase_user(PERSON) is False

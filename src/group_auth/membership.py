@@ -31,6 +31,11 @@ log = logging.getLogger("group_auth")
 #: because a restricted user who has actually left carries the same status.
 ALLOWED_STATUSES = frozenset({"creator", "administrator", "member"})
 
+#: Sweep the verdict caches once they hold this many people. They are keyed by
+#: user id and every stranger who writes to the bot puts one entry in, so
+#: without a sweep they grow for the lifetime of the process.
+_SWEEP_AT = 1024
+
 
 class Reason(str, Enum):
     """Why the gate decided what it decided.
@@ -154,6 +159,7 @@ class MembershipChecker:
         self._cache: dict[int, tuple[bool, float]] = {}
         # user_id -> when Telegram last confirmed membership for real
         self._last_ok: dict[int, float] = {}
+        self._sweep_at = _SWEEP_AT
         self._bound: tuple[int, ...] = ()
         self._api_broken = False
 
@@ -223,6 +229,12 @@ class MembershipChecker:
             self._last_ok.clear()
             return
         self._cache.pop(user_id, None)
+        # The grace window means "Telegram confirmed this person recently, so
+        # trust them while it is unreachable". Once Telegram has said they
+        # left, that is no longer a reason to trust them: keeping the window
+        # here let a removed person back in for up to ``grace`` seconds on the
+        # first failed check.
+        self._last_ok.pop(user_id, None)
 
     def _cached(self, user_id: int, now: float) -> bool | None:
         hit = self._cache.get(user_id)
@@ -231,8 +243,29 @@ class MembershipChecker:
         allowed, taken = hit
         ttl = self.config.cache_ttl if allowed else self.config.deny_cache_ttl
         if now - taken >= ttl:
+            del self._cache[user_id]
             return None
         return allowed
+
+    def _prune(self, now: float) -> None:
+        """Drop every entry no lookup could still use.
+
+        Amortised O(1) per check: the sweep itself is O(n), and the threshold
+        doubles past whatever survives it, so a bot with many genuinely active
+        users sweeps rarely rather than on every message.
+        """
+        live: dict[int, tuple[bool, float]] = {}
+        for uid, (allowed, taken) in self._cache.items():
+            ttl = self.config.cache_ttl if allowed else self.config.deny_cache_ttl
+            if now - taken < ttl:
+                live[uid] = (allowed, taken)
+        self._cache = live
+        self._last_ok = {
+            uid: seen
+            for uid, seen in self._last_ok.items()
+            if now - seen < self.config.grace
+        }
+        self._sweep_at = max(_SWEEP_AT, 2 * len(self._cache))
 
     # ----------------------------------------------------------------- check
 
@@ -259,6 +292,8 @@ class MembershipChecker:
             return Verdict(False, Reason.NO_GROUP)
 
         now = self._clock()
+        if len(self._cache) >= self._sweep_at:
+            self._prune(now)
         cached = self._cached(user_id, now)
         if cached is not None:
             return Verdict(cached, Reason.CACHED)
@@ -385,6 +420,33 @@ class MembershipChecker:
         await self._set_membership(user.user_id, member)
         if forget:
             self.forget(user.user_id)
+
+    # --------------------------------------------------------------- erasure
+
+    async def erase_user(self, user_id: int) -> bool:
+        """Delete everything remembered about one person. Returns whether a
+        row existed.
+
+        The roster holds a username and a name, so a bot that is asked to
+        delete somebody's data needs a way to do it; dropping the row while a
+        cached verdict survives would be half a deletion, so the cache goes
+        first.
+
+        This does **not** swallow store errors, unlike the bookkeeping above.
+        There the rule is that a broken store must never become a refusal; here
+        the caller is an operator asking for a deletion, and a deletion that
+        quietly failed must not look like one that worked.
+        """
+        self.forget(user_id)
+        if self.store is None:
+            return False
+        forget_user = getattr(self.store, "forget_user", None)
+        if forget_user is None:
+            raise NotImplementedError(
+                f"{type(self.store).__name__} cannot delete users. Add "
+                "forget_user() to it; see group_auth.protocols.AuthStore."
+            )
+        return bool(await forget_user(user_id))
 
 
 def user_ref(user: Any) -> UserRef | None:

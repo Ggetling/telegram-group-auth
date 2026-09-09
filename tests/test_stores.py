@@ -6,6 +6,7 @@ tests, and the drift shows up as "it worked in memory".
 
 from __future__ import annotations
 
+import stat
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -123,3 +124,64 @@ async def test_sqlite_schema_is_additive_only() -> None:
     upper = SCHEMA.upper()
     assert "ALTER" not in upper
     assert upper.count("CREATE TABLE") == upper.count("CREATE TABLE IF NOT EXISTS")
+
+
+async def test_a_person_can_be_erased(store: AuthStore) -> None:
+    """A bot asked to delete somebody's data needs a way to actually do it."""
+    await store.remember_user(UserRef(7, username="seven"), source="contact")
+    await store.set_membership(7, True)
+
+    assert await store.forget_user(7) is True
+    assert await store.get_user(7) is None
+    assert await store.forget_user(7) is False
+
+
+async def test_the_source_records_where_the_row_came_from(store: AuthStore) -> None:
+    """The sqlite store used to write the name of the column it was setting."""
+    await store.set_membership(8, True)
+    row = await store.get_user(8)
+    assert row is not None and row.source == "membership"
+
+    await store.set_group_admin(9, True)
+    row = await store.get_user(9)
+    assert row is not None and row.source == "admins_sync"
+
+
+async def test_sqlite_keeps_the_roster_off_every_other_local_account(
+    tmp_path: Path,
+) -> None:
+    """0644 hands the usernames and names of everybody the bot saw to the host."""
+    path = tmp_path / "roster.db"
+    store = SqliteStore(path)
+    await store.remember_user(UserRef(7, username="seven"), source="contact")
+
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    for suffix in ("-wal", "-shm"):
+        companion = Path(f"{path}{suffix}")
+        if companion.exists():
+            assert stat.S_IMODE(companion.stat().st_mode) == 0o600, suffix
+    await store.close()
+
+
+async def test_sqlite_repairs_a_database_created_before_this(tmp_path: Path) -> None:
+    path = tmp_path / "roster.db"
+    first = SqliteStore(path)
+    await first.close()
+    path.chmod(0o644)
+
+    second = SqliteStore(path)
+
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    await second.close()
+
+
+async def test_sqlite_permissions_can_be_left_to_the_operator(tmp_path: Path) -> None:
+    path = tmp_path / "roster.db"
+    first = SqliteStore(path)
+    await first.close()
+    path.chmod(0o640)
+
+    second = SqliteStore(path, file_mode=None)
+
+    assert stat.S_IMODE(path.stat().st_mode) == 0o640
+    await second.close()

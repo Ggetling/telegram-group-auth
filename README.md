@@ -97,6 +97,26 @@ async def start(message: Message, auth: Verdict, is_admin: bool) -> None: ...
 
 `AuthConfig.from_env(prefix="MYBOT_")` renames the lot.
 
+## Who chooses the group
+
+Only an administrator of the bot, and there are exactly two ways to do it.
+Neither is reachable by an administrator of the group: running the group and
+operating the bot are deliberately different jobs.
+
+* **`AUTH_GROUP_IDS`**, read at startup. Whoever controls the environment
+  controls the group.
+* **Adding the bot to the group.** Under the default `bind_on_add=admin_only`
+  the binding is accepted only if the person who added the bot is in
+  `AUTH_ADMIN_IDS`; anyone else adding it has the attempt refused and logged.
+  The binding is stored, so it outlives a restart, and it is how you avoid ever
+  looking up a `-100…` id by hand.
+
+`checker.bind(group_id)` / `checker.unbind(group_id)` do it programmatically —
+put them behind `AdminFilter` if your bot wants a command for it. What cannot
+be built on top is a picker: **the Bot API has no method that lists the chats a
+bot belongs to.** A bot learns a group exists only when somebody adds it there,
+the same limitation that keeps the roster partial.
+
 ## Two things that fail silently
 
 * **`chat_member` updates require the bot to be an administrator of the
@@ -116,8 +136,15 @@ async def start(message: Message, auth: Verdict, is_admin: bool) -> None: ...
   means `AUTH_ADMIN_IDS` is as sensitive as the bot token.
 * A person removed from the group keeps access for up to `AUTH_CACHE_TTL`
   unless the bot is a group administrator, in which case the `chat_member`
-  update revokes it at once. Set `AUTH_CACHE_TTL` lower if that window matters
-  more to you than the API calls it saves.
+  update revokes it at once — and closes their grace window with it, so a
+  Telegram outage right afterwards does not give the time back. Set
+  `AUTH_CACHE_TTL` lower if that window matters more to you than the API calls
+  it saves.
+* The roster is personal data: ids, usernames and names. `SqliteStore` keeps
+  the file at `0600` (pass `file_mode=None` to manage that yourself), and
+  `await checker.erase_user(id)` deletes somebody's row and cached verdict
+  together. Nothing expires rows on its own — how long to keep them is your
+  bot's decision.
 * The grace window is a deliberate fail-open. `AUTH_GRACE=0` turns it off and
   makes an unreachable Telegram mean nobody but administrators gets in.
 
