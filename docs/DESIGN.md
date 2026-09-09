@@ -114,7 +114,8 @@ can be re-run rather than believed.
 | The core needs no bot framework | `pip install .` into an empty venv, import `group_auth`, assert `aiogram` is absent | passes |
 | The core reads a framework's objects, not just its own | a test passes a plain `dict`; separately, all seven real `python-telegram-bot` 22.8 `ChatMember` subclasses were constructed and read correctly, `restricted` both ways | passes |
 | Types and style | `mypy` (strict, 13 files), `ruff check`, `ruff format --check` | clean |
-| aiogram version | 3.31.0 on Python 3.13.5 | passes |
+| aiogram version | 3.31.0 on Python 3.13.5 locally | passes |
+| Python 3.10, 3.11, 3.12, 3.13 | the CI matrix, run 34364991608 on 2026-09-09 — tests, lint, types and the bare-core import on each | passes on all four |
 
 ## Not verified
 
@@ -127,9 +128,8 @@ with a measurement and the date.
 | В-2 | Does `getChatMember` return status `left`, or a 400, for somebody who was never in the chat? The absence markers in `NOT_MEMBER_MARKERS` are a **guess** assembled from reported error texts | one live call for a stranger's id. Getting it wrong is not dangerous: an unmatched error becomes `api_error`, which also refuses — it just costs an API call per message from an outsider |
 | В-3 | Behaviour on a group with "hide members" enabled, and for an anonymous administrator posting as the channel | a live group with those settings |
 | В-4 | Whether `getChatMember` behaves the same way for a channel as for a supergroup. Channels are not a supported use here, but nothing rejects a channel id either | a live channel |
-| В-5 | The CI matrix (3.10–3.13) has **never run** — it was written before this repository had a remote. Only 3.13.5 has been exercised, locally | the first push |
-| В-6 | The python-telegram-bot handler wiring in [INTEGRATION.md](INTEGRATION.md) has not been run end to end; only the core's reading of PTB objects was checked | somebody running it against a live bot |
-| В-7 | Behaviour under Telegram rate limiting (429) when many strangers write at once. A 429 is not an absence marker, so it becomes `api_error`, which is the safe direction — but the retry behaviour is untested | a load test, or a live incident |
+| В-5 | The python-telegram-bot handler wiring in [INTEGRATION.md](INTEGRATION.md) has not been run end to end; only the core's reading of PTB objects was checked | somebody running it against a live bot |
+| В-6 | Behaviour under Telegram rate limiting (429) when many strangers write at once. A 429 is not an absence marker, so it becomes `api_error`, which is the safe direction — but the retry behaviour is untested | a load test, or a live incident |
 
 ## The manual check that closes В-1
 
